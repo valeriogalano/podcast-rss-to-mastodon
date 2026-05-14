@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from github_state import update_github_variable
 from publish import (
     fetch_last_episode,
     is_published,
@@ -126,3 +127,41 @@ class TestPublishToMastodon:
         with patch("publish.requests.post", return_value=mock_resp):
             with pytest.raises(Exception, match="Errore Mastodon API"):
                 publish_to_mastodon(episode, "https://mastodon.example/api/v1/statuses", "BAD_TOKEN", "{title}")
+
+
+class TestUpdateGithubVariable:
+    def _make_env(self):
+        return {"GH_TOKEN": "token123", "GITHUB_REPOSITORY": "owner/repo"}
+
+    def test_raises_on_401(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        mock_resp.text = "Unauthorized"
+        with patch("github_state.requests.patch", return_value=mock_resp):
+            with patch.dict(os.environ, self._make_env()):
+                with pytest.raises(RuntimeError, match="401"):
+                    update_github_variable("MY_VAR", "value")
+
+    def test_raises_on_non_204_non_404(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_resp.text = "Server Error"
+        with patch("github_state.requests.patch", return_value=mock_resp):
+            with patch.dict(os.environ, self._make_env()):
+                with pytest.raises(RuntimeError, match="500"):
+                    update_github_variable("MY_VAR", "value")
+
+    def test_creates_on_404(self):
+        patch_resp = MagicMock()
+        patch_resp.status_code = 404
+        post_resp = MagicMock()
+        post_resp.status_code = 201
+        with patch("github_state.requests.patch", return_value=patch_resp), \
+             patch("github_state.requests.post", return_value=post_resp):
+            with patch.dict(os.environ, self._make_env()):
+                update_github_variable("MY_VAR", "value")  # should not raise
+
+    def test_skips_when_no_token(self):
+        env = {"GH_TOKEN": "", "GITHUB_REPOSITORY": ""}
+        with patch.dict(os.environ, env):
+            update_github_variable("MY_VAR", "value")  # should not raise
