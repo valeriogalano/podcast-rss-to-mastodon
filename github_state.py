@@ -42,7 +42,7 @@ def update_github_variable(variable_name: str, value: str) -> None:
             logger.debug(f"Variabile {variable_name} creata.")
             return
 
-    logger.warning(
+    raise RuntimeError(
         f"Impossibile aggiornare variabile {variable_name}: "
         f"{response.status_code} {response.text}"
     )
