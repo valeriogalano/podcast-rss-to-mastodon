@@ -1,4 +1,3 @@
-import json
 import os
 from unittest.mock import MagicMock, patch
 
@@ -8,8 +7,7 @@ from github_state import update_github_variable
 from publish import (
     fetch_last_episode,
     is_published,
-    load_podcasts_config,
-    load_published_urls,
+    normalize_template,
     publish_to_mastodon,
 )
 
@@ -34,50 +32,37 @@ SAMPLE_RSS_NO_KEYWORDS = b"""<?xml version="1.0"?>
   </channel>
 </rss>"""
 
+SAMPLE_RSS_NO_LINK = b"""<?xml version="1.0"?>
+<rss version="2.0">
+  <channel>
+    <item>
+      <title>Episodio senza link</title>
+      <enclosure url="https://example.com/ep42.mp3" type="audio/mpeg" length="12345"/>
+    </item>
+  </channel>
+</rss>"""
 
-class TestLoadPublishedUrls:
-    def test_returns_dict_from_env(self):
-        data = {"pod1": "https://example.com/ep1"}
-        with patch.dict(os.environ, {"LAST_PUBLISHED_URLS": json.dumps(data)}):
-            result = load_published_urls()
-        assert result == data
 
-    def test_returns_empty_dict_when_env_missing(self):
-        env = {k: v for k, v in os.environ.items() if k != "LAST_PUBLISHED_URLS"}
-        with patch.dict(os.environ, env, clear=True):
-            result = load_published_urls()
-        assert result == {}
+class TestNormalizeTemplate:
+    def test_converts_literal_backslash_n(self):
+        assert normalize_template("riga1\\nriga2") == "riga1\nriga2"
 
-    def test_returns_empty_dict_on_invalid_json(self):
-        with patch.dict(os.environ, {"LAST_PUBLISHED_URLS": "not-json"}):
-            result = load_published_urls()
-        assert result == {}
+    def test_leaves_real_newlines_unchanged(self):
+        assert normalize_template("riga1\nriga2") == "riga1\nriga2"
+
+    def test_empty_string(self):
+        assert normalize_template("") == ""
 
 
 class TestIsPublished:
     def test_returns_true_when_link_matches(self):
-        urls = {"pod1": "https://example.com/ep42"}
-        assert is_published("https://example.com/ep42", "pod1", urls) is True
+        assert is_published("https://example.com/ep42", "https://example.com/ep42") is True
 
     def test_returns_false_when_link_differs(self):
-        urls = {"pod1": "https://example.com/ep41"}
-        assert is_published("https://example.com/ep42", "pod1", urls) is False
+        assert is_published("https://example.com/ep42", "https://example.com/ep41") is False
 
-    def test_returns_false_when_podcast_missing(self):
-        assert is_published("https://example.com/ep42", "pod1", {}) is False
-
-
-class TestLoadPodcastsConfig:
-    def test_loads_valid_json(self, tmp_path):
-        config = [{"id": "p1", "name": "Podcast 1", "feed_url": "https://example.com/feed"}]
-        config_file = tmp_path / "podcasts.json"
-        config_file.write_text(json.dumps(config))
-        result = load_podcasts_config(str(config_file))
-        assert result == config
-
-    def test_raises_when_file_missing(self, tmp_path):
-        with pytest.raises(FileNotFoundError):
-            load_podcasts_config(str(tmp_path / "missing.json"))
+    def test_returns_false_when_last_url_empty(self):
+        assert is_published("https://example.com/ep42", "") is False
 
 
 class TestFetchLastEpisode:
@@ -97,6 +82,13 @@ class TestFetchLastEpisode:
         with patch("publish.requests.get", return_value=mock_resp):
             episode = fetch_last_episode("https://feed.example.com/rss")
         assert episode["hashtags"] == ""
+
+    def test_fallback_to_enclosure_when_no_link(self):
+        mock_resp = MagicMock()
+        mock_resp.content = SAMPLE_RSS_NO_LINK
+        with patch("publish.requests.get", return_value=mock_resp):
+            episode = fetch_last_episode("https://feed.example.com/rss")
+        assert episode["link"] == "https://example.com/ep42.mp3"
 
     def test_raises_on_empty_feed(self):
         empty_rss = b"""<?xml version="1.0"?><rss><channel></channel></rss>"""
@@ -131,7 +123,11 @@ class TestPublishToMastodon:
 
 class TestUpdateGithubVariable:
     def _make_env(self):
-        return {"GH_TOKEN": "token123", "GITHUB_REPOSITORY": "owner/repo"}
+        return {
+            "GH_TOKEN": "token123",
+            "GITHUB_REPOSITORY": "owner/repo",
+            "GITHUB_ENVIRONMENT": "pensieriincodice",
+        }
 
     def test_raises_on_401(self):
         mock_resp = MagicMock()
@@ -159,9 +155,10 @@ class TestUpdateGithubVariable:
         with patch("github_state.requests.patch", return_value=patch_resp), \
              patch("github_state.requests.post", return_value=post_resp):
             with patch.dict(os.environ, self._make_env()):
-                update_github_variable("MY_VAR", "value")  # should not raise
+                update_github_variable("MY_VAR", "value")  # non deve sollevare
 
-    def test_skips_when_no_token(self):
-        env = {"GH_TOKEN": "", "GITHUB_REPOSITORY": ""}
+    def test_raises_when_env_vars_missing(self):
+        env = {"GH_TOKEN": "", "GITHUB_REPOSITORY": "", "GITHUB_ENVIRONMENT": ""}
         with patch.dict(os.environ, env):
-            update_github_variable("MY_VAR", "value")  # should not raise
+            with pytest.raises(RuntimeError, match="non impostati"):
+                update_github_variable("MY_VAR", "value")

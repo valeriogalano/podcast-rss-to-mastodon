@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 import re
@@ -14,11 +13,8 @@ logger = logging.getLogger("mastodon")
 ITUNES_NS = 'http://www.itunes.com/dtds/podcast-1.0.dtd'
 
 
-def load_podcasts_config(config_file: str) -> list:
-    if not os.path.exists(config_file):
-        raise FileNotFoundError(f"File di configurazione non trovato: {config_file}")
-    with open(config_file, 'r') as f:
-        return json.load(f)
+def normalize_template(template: str) -> str:
+    return template.replace('\\n', '\n')
 
 
 def fetch_last_episode(feed_url: str) -> dict:
@@ -33,6 +29,11 @@ def fetch_last_episode(feed_url: str) -> dict:
 
     title = item.findtext('title', '').strip()
     link = item.findtext('link', '').strip()
+
+    if not link:
+        enclosure = item.find('enclosure')
+        if enclosure is not None:
+            link = enclosure.get('url', '').strip()
 
     if not title or not link:
         raise Exception(f"Titolo o link mancante: {title=} {link=}")
@@ -49,17 +50,8 @@ def fetch_last_episode(feed_url: str) -> dict:
     return {'title': title, 'link': link, 'hashtags': hashtags}
 
 
-def load_published_urls() -> dict:
-    raw = os.environ.get('LAST_PUBLISHED_URLS', '{}')
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        logger.warning("LAST_PUBLISHED_URLS non è JSON valido, uso dict vuoto.")
-        return {}
-
-
-def is_published(link: str, podcast_id: str, published_urls: dict) -> bool:
-    return published_urls.get(podcast_id) == link
+def is_published(link: str, last_published_url: str) -> bool:
+    return last_published_url == link
 
 
 def publish_to_mastodon(episode: dict, api_url: str, token: str, template: str) -> None:
@@ -85,23 +77,16 @@ def publish_to_mastodon(episode: dict, api_url: str, token: str, template: str) 
 if __name__ == "__main__":
     token = os.environ['MASTODON_TOKEN']
     api_url = os.environ.get('MASTODON_API_URL', 'https://mastodon.uno/api/v1/statuses')
+    rss_url = os.environ['RSS_URL']
+    template = normalize_template(os.environ['TEMPLATE'])
+    last_published_url = os.environ.get('LAST_PUBLISHED_URL', '')
 
-    podcasts = load_podcasts_config('./podcasts.json')
-    published_urls = load_published_urls()
-    logger.info(f"Trovati {len(podcasts)} podcast da processare")
+    episode = fetch_last_episode(rss_url)
+    logger.info(f"Ultimo episodio: {episode['link']}")
 
-    for podcast in podcasts:
-        logger.info(f"=== {podcast['name']} ===")
-
-        episode = fetch_last_episode(podcast['feed_url'])
-        logger.info(f"Ultimo episodio: {episode['link']}")
-
-        if is_published(episode['link'], podcast['id'], published_urls):
-            logger.info("Episodio già pubblicato, skip.")
-            continue
-
-        publish_to_mastodon(episode, api_url, token, podcast['template'])
-        published_urls[podcast['id']] = episode['link']
-        update_github_variable('LAST_PUBLISHED_URLS', json.dumps(published_urls))
-
-    logger.info("Tutti i podcast processati.")
+    if is_published(episode['link'], last_published_url):
+        logger.info("Episodio già pubblicato, skip.")
+    else:
+        publish_to_mastodon(episode, api_url, token, template)
+        update_github_variable('LAST_PUBLISHED_URL', episode['link'])
+        logger.info("Stato aggiornato.")
