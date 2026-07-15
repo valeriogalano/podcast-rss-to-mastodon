@@ -33,7 +33,7 @@ jobs:
           LAST_PUBLISHED_URL: ${{ vars.LAST_PUBLISHED_URL }}
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_ENVIRONMENT: ${{ github.environment }}
+          GITHUB_ENVIRONMENT: ${{ github.job }}
         run: python publish.py
 
   goodvibrations:
@@ -60,5 +60,5 @@ jobs:
           LAST_PUBLISHED_URL: ${{ vars.LAST_PUBLISHED_URL }}
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_ENVIRONMENT: ${{ github.environment }}
+          GITHUB_ENVIRONMENT: ${{ github.job }}
         run: python publish.py
