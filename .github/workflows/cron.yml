@@ -2,7 +2,7 @@ name: Publish Podcast Episodes
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '0 1,7,13,19 * * *'  # UTC -> 02/08/14/20 CET, 03/09/15/21 CEST
   workflow_dispatch:
 
 permissions:
